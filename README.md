@@ -1,174 +1,181 @@
-# FPGA Sobel Edge Detector (AXI-Stream + DMA + PYNQ)
+# FPGA Sobel Edge Detector (Real-Time HDMI Pipeline)
 
-Hardware-accelerated Sobel edge detector implemented using Vitis HLS and deployed on a PYNQ-Z2 platform.  
-The design streams 256×256 grayscale images through AXI-DMA into a custom HLS IP core using a 3×3 sliding window architecture with line buffers.
+Hardware-accelerated Sobel edge detection implemented on a PYNQ-Z2 (Zynq-7000 SoC) using Vitis HLS, AXI-Stream, AXI DMA/VDMA, and HDMI output.
 
-This project was later extended to support **real-time video output via HDMI using AXI-VDMA**, enabling dynamic framebuffer rendering and animation.
-
----
-
-## Project Overview
-
-This project implements a hardware Sobel edge detector using:
-
-- Vitis HLS (C++ → RTL)
-- AXI-Stream interfaces
-- AXI-DMA (MM2S + S2MM)
-- AXI-VDMA (video output pipeline)
-- Vivado Block Design
-- PYNQ Python control
-
-The system processes full images via streaming and returns the computed gradient magnitude, and supports real-time display via HDMI.
+The project evolved from offline image processing (DMA) to a real-time video processing pipeline, where frames from a USB camera are processed in hardware and displayed live via HDMI.
 
 ---
 
-## Architecture
+## Key Features
 
-### HLS IP Core
+- Real-time edge detection on live camera feed  
+- Fully streaming architecture (1 pixel per clock, II=1)  
+- AXI-based system integration (DMA, VDMA, AXI4-Stream)  
+- Hardware/software co-design (PS + PL)  
+- HDMI output with Video Timing Controller (VTC)  
+- HLS-based accelerator with line-buffer architecture  
 
-- AXI-Stream input/output (`ap_axiu<8>`)
-- 3×3 sliding window
-- Two line buffers (BRAM inferred)
-- Pipelined with II=1
-- Output: `|Gx| + |Gy|` clipped to 255
-- TLAST asserted on final pixel
+---
+
+## System Architecture
+
+USB Camera (PS / Linux)  
+→ OpenCV (frame capture, resize, RGB conversion)  
+→ DDR Framebuffer  
+→ AXI VDMA (MM2S)  
+→ Sobel HLS IP (AXI-Stream)  
+→ AXI4-Stream to Video Out  
+→ RGB2DVI  
+→ HDMI Monitor  
+
+---
+
+## Sobel HLS IP
+
+### Architecture
+
+- AXI-Stream input/output (24-bit RGB)  
+- Internal grayscale conversion  
+- 3×3 sliding window  
+- Dual line buffers (BRAM)  
+- Fully pipelined (II = 1)  
 
 ### Sobel Kernels
 
-Gx =
-[ -1   0   1  
-  -2   0   2  
-  -1   0   1 ]
+```
+Gx = [ -1   0   1
+       -2   0   2
+       -1   0   1 ]
 
-Gy =
-[ -1  -2  -1  
-   0   0   0  
-   1   2   1 ]
+Gy = [ -1  -2  -1
+        0   0   0
+        1   2   1 ]
+```
 
----
+### Output
 
-## Vivado Block Design
-
-### DMA-Based Processing Pipeline
-
-- Zynq PS
-- AXI DMA
-- Custom Sobel HLS IP
-- Shared clock: `FCLK_CLK0`
-- Reset: `peripheral_aresetn`
-
-**Configuration:**
-
-- Stream data width: 8-bit
-- Memory-mapped width: 32-bit
-- Scatter-Gather: Disabled
-- Single channel DMA
-
-### HDMI Video Pipeline
-
-- AXI VDMA (MM2S)
-- Video Timing Controller (VTC)
-- AXI4-Stream to Video Out
-- RGB2DVI encoder
-
-**Configuration:**
-
-- Resolution: 640×480 @ 60 Hz
-- Pixel clock: 25 MHz
-- Stream width: 24-bit (RGB)
-- Triple buffering enabled
-
-### DMA Execution Order
-
-1. Start Sobel IP
-2. Start S2MM (receive channel)
-3. Start MM2S (send channel)
-4. Wait for completion
+- Gradient magnitude: |Gx| + |Gy|  
+- Clipped to 8-bit  
+- Replicated to RGB for HDMI display  
 
 ---
 
-## Software Control (PYNQ)
+## HDMI Output Configuration
 
-Python notebooks perform:
+- Resolution: 640 × 480 @ 60 Hz  
+- Pixel clock: 25 MHz  
+- AXI4-Stream video pipeline  
+- Triple buffering via VDMA  
+- Reset synchronization across clock domains  
 
-- Bitstream loading
-- DMA / VDMA buffer allocation (DDR)
-- Cache flush/invalidate handling
-- Transfer synchronization
-- Framebuffer generation and animation
-- Output visualization
+---
 
-Supported formats:
+## DMA-Based Version (Offline Processing)
 
-- PGM (P5, 8-bit)
-- PNG/JPG (converted to grayscale)
+DDR → AXI DMA → Sobel IP → AXI DMA → DDR  
+
+Used for:
+
+- Validating Sobel correctness  
+- Debugging AXI-Stream behavior  
+- Testing TLAST and frame handling  
 
 ---
 
 ## Results
 
-### Sobel Edge Detection (Hardware)
+### Offline Sobel (DMA)
 
-| Input | Output |
-|------|--------|
-| ![Input](images/img_input.png) | ![Output](images/img_output_hw.png) |
+![Input](images/sobel_frame/img_input.png)  
+![Output](images/sobel_frame/img_output_hw.png)
 
-Edge detection correctly highlights object boundaries using real hardware acceleration.
+---
 
-### HDMI Output (Real-Time)
+### Real-Time HDMI Sobel
 
-- Live framebuffer rendering on monitor
-- Moving object animation using Python-controlled updates
-- VDMA circular buffering with multiple frame stores
+Live USB camera processed in hardware:
 
-👉 Demo:  
-[Watch HDMI animation](media/moving_square.mp4)
+![Real-Time Sobel](images/hdmi_real_time/sobel_example.jpg)
+
+Demo video:  
+media/real_time_application.mp4
+
+---
+
+## Software Control (PYNQ)
+
+Python (Jupyter) is used for:
+
+- USB camera capture (OpenCV)  
+- Frame resizing (640×480)  
+- BGR to RGB conversion  
+- Framebuffer writes to DDR  
+- VDMA configuration via MMIO  
 
 ---
 
 ## Repository Structure
 
-/images/        → Input/output examples  
-/media/         → HDMI demo videos  
-/notebooks/     → PYNQ control notebooks  
-/src/           → HLS source code  
-/vivado/        → Block designs  
-/sobel_hw_stream/ → HLS IP export  
-README.md  
+```
+images/
+  ├── sobel_frame/
+  └── hdmi_real_time/
+
+media/
+  └── real_time_application.mp4
+
+notebooks/
+  ├── DMA_notebooks/
+  └── hdmi/
+
+src/
+  ├── dma_sobel/
+  └── hdmi_sobel/
+
+ip/
+  ├── sobel_dma/
+  └── sobel_stream/
+
+vivado/
+  ├── dma_sobel_pipeline.bd
+  └── hdmi_sobel_pipeline.bd
+```
 
 ---
 
-## Key Technical Points
+## Key Technical Challenges
 
-- Fully streaming architecture (no full-frame buffering)
-- Sliding window + BRAM line buffers
-- II=1 pipeline
-- Correct TLAST handling for DMA stability
-- AXI DMA ↔ AXI VDMA integration
-- Framebuffer management in DDR
-- Triple buffering for video output
-- Clock domain separation (AXI vs pixel clock)
-
-Debugged issues:
-
-- AXI-DMA handshake and stalls
-- VDMA frame store configuration
-- HDMI timing mismatches
-- Pixel clock generation and reset synchronization
-
-- Verified via:
-  - HLS C simulation
-  - RTL simulation
-  - On-board hardware validation
+- AXI-Stream protocol correctness (TVALID, TLAST, TUSER)  
+- DMA and VDMA integration  
+- Clock domain crossing (PS clock vs pixel clock)  
+- Reset synchronization across domains  
+- Real-time framebuffer consistency  
+- HLS IP packaging issues (Vivado 2020.2 workaround)  
 
 ---
 
 ## Future Improvements
 
-- Real-time Sobel processing on HDMI video stream
-- RGB → grayscale conversion in hardware
-- Parameterizable image size
-- Runtime-configurable kernel
-- Throughput benchmarking
-- AXI4-Lite configuration registers for dynamic control
-- UVM-based verification (RTL version)
+- RGB Sobel (per-channel processing)  
+- Higher resolution (720p / 1080p)  
+- Double buffering to reduce tearing  
+- AXI-Lite configurable parameters  
+- RTL Sobel implementation  
+- UVM-based verification  
+
+---
+
+## Technologies Used
+
+- Vitis HLS (C++ → RTL)  
+- Vivado (Block Design)  
+- PYNQ (Python + MMIO)  
+- OpenCV  
+- AXI DMA / AXI VDMA / AXI4-Stream  
+- Zynq-7000 SoC  
+
+---
+
+## Summary
+
+This project demonstrates a complete real-time FPGA video processing system combining hardware acceleration, streaming architecture, and embedded Linux interaction.
